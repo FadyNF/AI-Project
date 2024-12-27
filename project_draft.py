@@ -1,20 +1,19 @@
 import helper_functions as hf
-
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import random
-from sklearn.preprocessing import StandardScaler
+import time
+
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score  
 from sklearn.model_selection import train_test_split, cross_val_score
 from deap import base, creator, tools, algorithms
-from sklearn.preprocessing import StandardScaler
-from sklearn.tree import DecisionTreeClassifier  
-from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
-from sklearn.neural_network import MLPClassifier
+from concurrent.futures import ThreadPoolExecutor
+
 
 # Load datasets
 app_record = hf.load_file('datasets/application_record.csv')
@@ -58,51 +57,32 @@ print(credit_record['STATUS'].value_counts())  # Check distribution of STATUS va
 # ---------------- Data Preprocessing ---------------- #
 print("Data Preprocessing")
 
-# Map 'STATUS' values to binary classification
+app_record['OCCUPATION_TYPE'] = app_record['OCCUPATION_TYPE'].fillna('Unknown')
+
+app_record['AGE'] = abs(app_record['DAYS_BIRTH']) // 365
+
+app_record['DAYS_EMPLOYED'] = app_record['DAYS_EMPLOYED'].replace(365243, 0)
+
+app_record = app_record.drop(columns=['FLAG_MOBIL', 'FLAG_PHONE', 'FLAG_WORK_PHONE', 'FLAG_EMAIL', 'CODE_GENDER', 'DAYS_BIRTH'], errors='ignore')
+
+label_encoder = LabelEncoder()
+categorical_cols = app_record.select_dtypes(include=['object']).columns
+for col in categorical_cols:
+    app_record[col] = label_encoder.fit_transform(app_record[col])
+
+scaler = StandardScaler()
+numeric_cols = ['AMT_INCOME_TOTAL', 'CNT_CHILDREN', 'CNT_FAM_MEMBERS', 'AGE', 'DAYS_EMPLOYED']
+app_record[numeric_cols] = scaler.fit_transform(app_record[numeric_cols])
+
 status_mapping = {'C': 0, 'X': 0, '0': 1, '1': 1, '2': 1, '3': 1, '4': 1, '5': 1}
 credit_record['STATUS'] = credit_record['STATUS'].map(status_mapping)
+credit_record = credit_record.groupby('ID', as_index=False)['STATUS'].max()
 
-# Merge the datasets on 'ID'
-merged_data = app_record.merge(credit_record, on='ID', how='inner')
-print(f"Merged dataset shape: {merged_data.shape}")
+merged_dataset = app_record.merge(credit_record, on='ID', how='inner')
 
-# Handle missing values
-missing_data_strategies = {
-    'OCCUPATION_TYPE': 'Unknown',  # fill with 'Unknown'
-}
-merged_data = hf.handle_missing_data(merged_data, missing_data_strategies)
-
-# Transform 'DAYS_BIRTH' to 'AGE' before removing outliers
-merged_data['AGE'] = abs(merged_data['DAYS_BIRTH']) / 365
-merged_data.drop(columns=['DAYS_BIRTH'], inplace=True)
-
-# Create child-to-family ratio
-merged_data['CHILD_TO_FAMILY_RATIO'] = merged_data['CNT_CHILDREN'] / (merged_data['CNT_FAM_MEMBERS'] + 1)
-
-# Remove irrelevant columns
-irrelevant_columns = ['FLAG_MOBIL', 'FLAG_PHONE', 'FLAG_WORK_PHONE', 'FLAG_EMAIL']
-merged_data.drop(columns=irrelevant_columns, errors='ignore', inplace=True)
-
-# Handle extreme values of DAYS_EMPLOYED
-merged_data['DAYS_EMPLOYED'] = merged_data['DAYS_EMPLOYED'].replace(365243, 0)
-
-# Remove outliers for relevant columns
-columns_to_check_for_outliers = ['AMT_INCOME_TOTAL', 'AGE', 'DAYS_EMPLOYED', 'CHILD_TO_FAMILY_RATIO']
-merged_data = hf.remove_outliers(merged_data, columns_to_check_for_outliers)
-
-# Drop ID column as it's not required for analysis
-merged_data.drop(columns=['ID'], inplace=True)
-
-# Encode categorical variables
-categorical_cols = ['CODE_GENDER', 'FLAG_OWN_CAR', 'FLAG_OWN_REALTY', 
-                    'NAME_INCOME_TYPE', 'NAME_EDUCATION_TYPE', 
-                    'NAME_FAMILY_STATUS', 'NAME_HOUSING_TYPE', 'OCCUPATION_TYPE']
-merged_data = pd.get_dummies(merged_data, columns=categorical_cols)
-
-# Feature scaling for numerical columns
-scaler = StandardScaler()
-numerical_cols = ['AMT_INCOME_TOTAL', 'AGE', 'DAYS_EMPLOYED', 'CHILD_TO_FAMILY_RATIO']
-merged_data[numerical_cols] = scaler.fit_transform(merged_data[numerical_cols])
+# Remove outliers from selected columns
+columns_to_check_for_outliers = ['AMT_INCOME_TOTAL', 'AGE', 'DAYS_EMPLOYED', 'CNT_CHILDREN']
+merged_dataset = hf.remove_outliers(merged_dataset, columns_to_check_for_outliers)
 
 # Check class imbalance after preprocessing
 # sns.countplot(x='STATUS', data=merged_data)
@@ -112,136 +92,264 @@ merged_data[numerical_cols] = scaler.fit_transform(merged_data[numerical_cols])
 print("Preprocessing Complete")
 
 # ---------------- Feature Selection ---------------- #
-print("Feature Selection")
-X = merged_data.drop(columns=['STATUS'])
-Y = merged_data['STATUS']
+# Split features and target
+X = merged_dataset.drop(columns=['ID', 'STATUS'], errors='ignore')
+y = merged_dataset['STATUS']
 
-# Split data into training and testing sets
-X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, random_state=42)
-
-POP_SIZE = 10  # Population size
-GENS = 10  # Number of generations
-CXPB = 0.7  # Crossover probability
-MUTPB = 0.2  # Mutation probability
-
-# Fitness function for the Genetic Algorithm
-def fitness_function(individual):
-    selected_features = [index for index, value in enumerate(individual) if value == 1]
-    if len(selected_features) == 0:  # Avoid empty feature selection
+# Genetic Algorithm Functions
+def evaluate(individual):
+    selected_features = [f for i, f in enumerate(X.columns) if individual[i] == 1]
+    if len(selected_features) == 0:
         return 0,
-    X_selected = X.iloc[:, selected_features]
 
-    # Split data dynamically into training and validation sets
-    X_train, X_val, Y_train, Y_val = train_test_split(X_selected, Y, test_size=0.3, random_state=42)
+    X_selected = X[selected_features]
+    X_train, X_temp, y_train, y_temp = train_test_split(X_selected, y, test_size=0.30, random_state=42)
+    X_val, _, y_val, _ = train_test_split(X_temp, y_temp, test_size=0.50, random_state=42)
 
-    # Train a Decision Tree classifier
-    model = DecisionTreeClassifier(random_state=42)
-    model.fit(X_train, Y_train)
+    model = LogisticRegression(max_iter=1000, random_state=42)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_val)
+    return accuracy_score(y_val, y_pred),
 
-    # Evaluate accuracy on the validation set
-    Y_pred = model.predict(X_val)
-    accuracy = accuracy_score(Y_val, Y_pred)
-    return accuracy,
 
-# Create types for DEAP
 creator.create("FitnessMax", base.Fitness, weights=(1.0,))
 creator.create("Individual", list, fitness=creator.FitnessMax)
 
-# Initialize toolbox
 toolbox = base.Toolbox()
-
-# Attribute generator for binary representation (0 or 1)
 toolbox.register("attr_bool", random.randint, 0, 1)
-
-# Structure initializers
-toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_bool, n=X.shape[1])  # n=number of features
+toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_bool, n=len(X.columns))
 toolbox.register("population", tools.initRepeat, list, toolbox.individual)
-
-# Register genetic operators
 toolbox.register("mate", tools.cxTwoPoint)
-toolbox.register("mutate", tools.mutFlipBit, indpb=0.05)
+toolbox.register("mutate", tools.mutFlipBit, indpb=0.1)
 toolbox.register("select", tools.selTournament, tournsize=3)
-toolbox.register("evaluate", fitness_function)
+toolbox.register("evaluate", evaluate)
 
-# Initialize population
-population = toolbox.population(n=POP_SIZE)
-
-# Evaluate initial population
-fitnesses = map(toolbox.evaluate, population)
-for ind, fit in zip(population, fitnesses):
-    ind.fitness.values = fit
-
-# Begin evolution
-for gen in range(GENS):
-    offspring = toolbox.select(population, len(population))
-    offspring = list(map(toolbox.clone, offspring))
-
-    for child1, child2 in zip(offspring[::2], offspring[1::2]):
-        if random.random() < CXPB:  # Crossover probability
-            toolbox.mate(child1, child2)
-            del child1.fitness.values
-            del child2.fitness.values
-
-    for mutant in offspring:
-        if random.random() < MUTPB:  # Mutation probability
-            toolbox.mutate(mutant)
-            del mutant.fitness.values
-
-    # Evaluate invalid individuals
-    invalid_individuals = [ind for ind in offspring if not ind.fitness.valid]
-    fitnesses = map(toolbox.evaluate, invalid_individuals)
-    for ind, fit in zip(invalid_individuals, fitnesses):
+# Parallelized Evaluation
+def evaluate_population(population):
+    with ThreadPoolExecutor() as executor:
+        fitnesses = list(executor.map(toolbox.evaluate, population))
+    for ind, fit in zip(population, fitnesses):
         ind.fitness.values = fit
 
-    population[:] = offspring
-    best_ind = tools.selBest(population, k=1)[0]
-    print(f"Generation {gen}: Best Fitness = {best_ind.fitness.values[0]}")
+def feature_selection_ga():
+    population = toolbox.population(n=20)
+    generations = 20
+    cx_prob = 0.7
+    mut_prob = 0.2
 
-# Final selected features
-selected_features = [index for index, value in enumerate(best_ind) if value == 1]
-print("Selected Features:", X.columns[selected_features].tolist())
+    for gen in range(generations):
+        start_time = time.time()
+        
+        print(f"Generation {gen}:")
+        offspring = toolbox.select(population, len(population))
+        offspring = list(map(toolbox.clone, offspring))
 
+        for child1, child2 in zip(offspring[::2], offspring[1::2]):
+            if random.random() < cx_prob:
+                toolbox.mate(child1, child2)
+                del child1.fitness.values
+                del child2.fitness.values
+
+        for mutant in offspring:
+            if random.random() < mut_prob:
+                toolbox.mutate(mutant)
+                del mutant.fitness.values
+
+        invalid_individuals = [ind for ind in offspring if not ind.fitness.valid]
+        evaluate_population(invalid_individuals)
+
+        population[:] = offspring
+        
+        best_ind = tools.selBest(population, 1)[0]
+        print(f"  Best Fitness: {best_ind.fitness.values[0]}")
+        print(f"  Time Taken: {time.time() - start_time:.2f} seconds")
+
+    return tools.selBest(population, 1)[0]
+
+best_features = feature_selection_ga()
+selected_columns = [f for i, f in enumerate(X.columns) if best_features[i] == 1]
+print("Best Selected Features:", selected_columns)
+
+
+# ---------------- Decision Tree Classifier ---------------- #
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import classification_report
+
+# Split the data into training and testing sets using the selected features
+X_selected = X[selected_columns]
+X_train, X_test, y_train, y_test = train_test_split(X_selected, y, test_size=0.30, random_state=42)
+
+# Initialize the Decision Tree Classifier
+dt_model = DecisionTreeClassifier(random_state=42)
+
+# Train the Decision Tree Classifier
+dt_model.fit(X_train, y_train)
+
+# Predict on the test set
+dt_y_pred = dt_model.predict(X_test)
+
+# Print the classification report for Decision Tree Classifier
+print("Classification Report for Decision Tree:")
+print(classification_report(y_test, dt_y_pred))
+# ---------------- MLP Classifier ---------------- #
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import classification_report
+
+# Split the data into training and testing sets using the selected features
+X_selected = X[selected_columns]
+X_train, X_test, y_train, y_test = train_test_split(X_selected, y, test_size=0.30, random_state=42)
+
+# Initialize the MLP Classifier
+mlp_model = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=42)
+
+# Train the MLP Classifier
+mlp_model.fit(X_train, y_train)
+
+# Predict on the test set
+mlp_y_pred = mlp_model.predict(X_test)
+
+# Print the classification report for MLP Classifier
+print("Classification Report for MLP Classifier:")
+print(classification_report(y_test, mlp_y_pred))
+
+
+from sklearn.model_selection import RandomizedSearchCV
+from scipy.stats import randint, uniform
+
+# ---------------- Random Search for Decision Tree ---------------- #
+print("Random Search for Decision Tree")
+
+# Define the hyperparameter grid for Decision Tree
+dt_param_dist = {
+    'criterion': ['gini', 'entropy', 'log_loss'],
+    'splitter': ['best', 'random'],
+    'max_depth': randint(1, 20),
+    'min_samples_split': randint(2, 20),
+    'min_samples_leaf': randint(1, 20),
+    'max_features': [None, 'sqrt', 'log2'],
+}
+
+# Initialize the Decision Tree Classifier
+dt_model = DecisionTreeClassifier(random_state=42)
+
+# Perform RandomizedSearchCV
+dt_random_search = RandomizedSearchCV(
+    dt_model,
+    param_distributions=dt_param_dist,
+    n_iter=50,
+    scoring='accuracy',
+    n_jobs=-1,
+    cv=5,
+    random_state=42
+)
+
+dt_random_search.fit(X_train, y_train)
+
+# Best parameters and performance
+print("Best Parameters for Decision Tree:", dt_random_search.best_params_)
+print("Best Cross-Validation Score:", dt_random_search.best_score_)
+
+# Evaluate on the test set
+dt_best_model = dt_random_search.best_estimator_
+dt_y_pred = dt_best_model.predict(X_test)
+print("Classification Report for Optimized Decision Tree:")
+print(classification_report(y_test, dt_y_pred))
+
+
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import classification_report
+from scipy.stats import uniform
+
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import classification_report
+from scipy.stats import uniform
+
+# # ---------------- NOT WORKING Random Search for MLP ---------------- #
+# print("Random Search for MLP Classifier")
+
+# # Optimized parameter grid
+# mlp_param_dist = {
+#     'hidden_layer_sizes': [(50,), (100,), (100, 50)],
+#     'activation': ['relu', 'tanh'],  # Simplified activations
+#     'solver': ['adam'],             # Focus on 'adam'
+#     'alpha': uniform(0.0001, 0.01), # Narrow regularization range
+#     'learning_rate': ['constant'],  # Fixed learning rate schedule
+#     'max_iter': [1500],             # Single iteration limit
+# }
+
+# # Subset the training data
+# X_train_subset, _, y_train_subset, _ = train_test_split(X_train, y_train, train_size=0.5, random_state=42)
+
+# # Initialize RandomizedSearchCV
+# mlp_random_search = RandomizedSearchCV(
+#     estimator=MLPClassifier(random_state=42),
+#     param_distributions=mlp_param_dist,
+#     n_iter=20,        # Reduced iterations
+#     scoring='accuracy',
+#     n_jobs=2,         # Limited parallelism
+#     cv=3,             # Fewer cross-validation folds
+#     random_state=42
+# )
+
+# # Fit the random search to the subset of the training data
+# mlp_random_search.fit(X_train_subset, y_train_subset)
+
+# # Best parameters and performance
+# print("Best Parameters for MLP Classifier:", mlp_random_search.best_params_)
+# print("Best Cross-Validation Score:", mlp_random_search.best_score_)
+
+# # Use the best model to predict on the test set
+# mlp_best_model = mlp_random_search.best_estimator_
+# mlp_y_pred = mlp_best_model.predict(X_test)
+
+# # Print the classification report for the optimized MLP Classifier
+# print("Classification Report for Optimized MLP Classifier:")
+# print(classification_report(y_test, mlp_y_pred))
 
 
 
 from sklearn.model_selection import GridSearchCV
 from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import classification_report
 
-# Define parameter grid for MLP
+# ---------------- Grid Search for MLP ---------------- #
+print("Grid Search for MLP Classifier")
+
+# Define the parameter grid
 mlp_param_grid = {
-    'hidden_layer_sizes': [(50,), (100,), (100, 50), (50, 50, 50)],  # Test varying network architectures
-    'activation': ['relu', 'tanh'],  # Popular activation functions
-    'solver': ['adam', 'sgd'],  # Common solvers
-    'alpha': [0.0001, 0.001, 0.01],  # Regularization strength
-    'learning_rate_init': [0.001, 0.01, 0.1],  # Learning rates
-    'batch_size': [32, 64, 128],  # Batch sizes
-    'max_iter': [200],  # Fixed maximum iterations
-    'random_state': [42],  # Ensure reproducibility
+    'hidden_layer_sizes': [(50,), (100,), (100, 50)],  # Few reasonable configurations
+    'activation': ['relu', 'tanh'],                  # Common activations
+    'alpha': [0.0001, 0.001, 0.01],                  # Regularization strength
+    'solver': ['adam'],                              # Focus on 'adam'
+    'max_iter': [1000],                              # Fixed iteration limit
 }
 
-# Initialize MLPClassifier
-mlp_model = MLPClassifier()
+# Subset the training data for quicker execution
+X_train_small, _, y_train_small, _ = train_test_split(X_train, y_train, train_size=0.3, random_state=42)
 
-# Set up GridSearchCV
+# Initialize GridSearchCV
 mlp_grid_search = GridSearchCV(
-    estimator=mlp_model,
+    estimator=MLPClassifier(random_state=42),
     param_grid=mlp_param_grid,
     scoring='accuracy',
-    cv=5,  # 5-fold cross-validation
-    n_jobs=-1,  # Use all available cores
-    verbose=2  # Print progress
+    n_jobs=-1,  # Use all available processors
+    cv=3,       # 3-fold cross-validation
+    verbose=2   # Show progress
 )
 
-# Perform the grid search on the selected features
-print("Performing Grid Search...")
-mlp_grid_search.fit(X_train, Y_train)
+# Fit the grid search to the subset of training data
+mlp_grid_search.fit(X_train_small, y_train_small)
 
-# Display best parameters and the corresponding score
-print("Best Parameters:", mlp_grid_search.best_params_)
-print(f"Best Cross-Validation Accuracy: {mlp_grid_search.best_score_:.4f}")
+# Best parameters and performance
+print("Best Parameters for MLP Classifier:", mlp_grid_search.best_params_)
+print("Best Cross-Validation Score:", mlp_grid_search.best_score_)
 
-# Evaluate the best model on the test set
-best_mlp_model = mlp_grid_search.best_estimator_
-Y_test_pred = best_mlp_model.predict(X_test)
-print("Test Set Classification Report:")
-print(classification_report(Y_test, Y_test_pred))
+# Use the best model to predict on the test set
+mlp_best_model = mlp_grid_search.best_estimator_
+mlp_y_pred = mlp_best_model.predict(X_test)
+
+# Print the classification report for the best MLP Classifier
+print("Classification Report for Optimized MLP Classifier:")
+print(classification_report(y_test, mlp_y_pred))

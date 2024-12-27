@@ -10,10 +10,14 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import classification_report
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score  
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
+from sklearn.neighbors import KNeighborsClassifier
+from imblearn.over_sampling import SMOTE
 from deap import base, creator, tools, algorithms
 from concurrent.futures import ThreadPoolExecutor
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import classification_report
 
 
 # Load datasets
@@ -191,8 +195,6 @@ dt_y_pred = dt_model.predict(X_test)
 print("Classification Report for Decision Tree:")
 print(classification_report(y_test, dt_y_pred))
 # ---------------- MLP Classifier ---------------- #
-from sklearn.neural_network import MLPClassifier
-from sklearn.metrics import classification_report
 
 # Split the data into training and testing sets using the selected features
 X_selected = X[selected_columns]
@@ -210,3 +212,55 @@ mlp_y_pred = mlp_model.predict(X_test)
 # Print the classification report for MLP Classifier
 print("Classification Report for MLP Classifier:")
 print(classification_report(y_test, mlp_y_pred, zero_division=1))
+# ---------------- Model Training and Evaluation ---------------- #
+
+# ---------------- Data Preparation ---------------- #
+# Handling class imbalance using SMOTE
+X_selected_features = X[selected_columns] 
+smote = SMOTE(random_state=42)
+X_resampled, Y_resampled = smote.fit_resample(X_selected_features, y)
+
+# Splitting the balanced dataset
+X_train, X_test, Y_train, Y_test = train_test_split(X_resampled, Y_resampled, test_size=0.15, random_state=42)
+
+# ---------------- Hyperparameter Tuning for kNN ---------------- #
+# Define the model
+knn = KNeighborsClassifier()
+
+# Define hyperparameters to tune
+param_grid = {
+    'n_neighbors': [3, 5, 7],  # Fewer neighbors to reduce computation time
+    'weights': ['uniform', 'distance'],  # Weighting strategy
+    'metric': ['euclidean', 'manhattan']  # Distance metrics
+}
+
+# GridSearchCV to find the best parameters with fewer folds for faster performance
+grid_search = GridSearchCV(estimator=knn, param_grid=param_grid, cv=3, scoring='accuracy', verbose=1, n_jobs=-1)
+grid_search.fit(X_train, Y_train)
+
+# Best parameters and score
+print(f"Best Parameters: {grid_search.best_params_}")
+print(f"Best Score: {grid_search.best_score_}")
+
+# ---------------- Train the kNN Model ---------------- #
+# Train with the best parameters
+best_knn = grid_search.best_estimator_
+best_knn.fit(X_train, Y_train)
+
+# ---------------- Evaluate the Model ---------------- #
+Y_pred = best_knn.predict(X_test)
+
+# Confusion Matrix
+print("Confusion Matrix:")
+print(confusion_matrix(Y_test, Y_pred))
+
+# Classification Report
+print("Classification Report:")
+print(classification_report(Y_test, Y_pred))
+
+# ---------------- Visualize Results ---------------- #
+sns.heatmap(confusion_matrix(Y_test, Y_pred), annot=True, fmt="d", cmap="Blues")
+plt.title("Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("True")
+plt.show()

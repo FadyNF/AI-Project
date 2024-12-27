@@ -200,6 +200,47 @@ dt_y_pred = dt_model.predict(X_test)
 print("Classification Report for Decision Tree:")
 print(classification_report(y_test, dt_y_pred))
 
+from sklearn.model_selection import RandomizedSearchCV
+from scipy.stats import randint, uniform
+# ---------------- Random Search for Decision Tree ---------------- #
+print("Random Search for Decision Tree")
+
+# Define the hyperparameter grid for Decision Tree
+dt_param_dist = {
+    'criterion': ['gini', 'entropy', 'log_loss'],
+    'splitter': ['best', 'random'],
+    'max_depth': randint(1, 20),
+    'min_samples_split': randint(2, 20),
+    'min_samples_leaf': randint(1, 20),
+    'max_features': [None, 'sqrt', 'log2'],
+}
+
+# Initialize the Decision Tree Classifier
+dt_model = DecisionTreeClassifier(random_state=42)
+
+# Perform RandomizedSearchCV
+dt_random_search = RandomizedSearchCV(
+    dt_model,
+    param_distributions=dt_param_dist,
+    n_iter=50,
+    scoring='accuracy',
+    n_jobs=-1,
+    cv=5,
+    random_state=42
+)
+
+dt_random_search.fit(X_train, y_train)
+
+# Best parameters and performance
+print("Best Parameters for Decision Tree:", dt_random_search.best_params_)
+print("Best Cross-Validation Score:", dt_random_search.best_score_)
+
+# Evaluate on the test set
+dt_best_model = dt_random_search.best_estimator_
+dt_y_pred = dt_best_model.predict(X_test)
+print("Classification Report for Optimized Decision Tree:")
+print(classification_report(y_test, dt_y_pred))
+
 # ---------------- MLP Classifier ---------------- #
 mlp_model = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=42)
 mlp_model.fit(X_train, y_train)

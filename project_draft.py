@@ -1,3 +1,4 @@
+
 import helper_functions as hf
 import numpy as np
 import matplotlib.pyplot as plt
@@ -213,47 +214,42 @@ print("Classification Report for MLP Classifier:")
 print(classification_report(y_test, mlp_y_pred, zero_division=1))
 
 # ---------------- kNN Classifier ---------------- #
+# ---------------- kNN Classifier with SMOTE ---------------- #
 smote = SMOTE(random_state=42)
-X_resampled, y_resampled = smote.fit_resample(X_selected, y)
+X_resampled, Y_resampled = smote.fit_resample(X_selected, y)
 
-# Re-split the balanced data
-X_train_val_resampled, X_test_resampled, y_train_val_resampled, y_test_resampled = train_test_split(
-    X_resampled, y_resampled, test_size=0.15, random_state=42
-)
-X_train_resampled, X_val_resampled, y_train_resampled, y_val_resampled = train_test_split(
-    X_train_val_resampled, y_train_val_resampled, test_size=0.1765, random_state=42
-)
-
-# Hyperparameter tuning using validation set
+# Define kNN classifier and hyperparameter grid
+knn = KNeighborsClassifier()
 param_grid = {
-    'n_neighbors': [3, 5, 7],
-    'weights': ['uniform', 'distance'],
-    'metric': ['euclidean', 'manhattan']
+    'n_neighbors': [3, 5, 7],  
+    'weights': ['uniform', 'distance'], 
+    'metric': ['euclidean', 'manhattan']  
 }
-grid_search = GridSearchCV(
-    estimator=KNeighborsClassifier(),
-    param_grid=param_grid,
-    cv=3,
-    scoring='accuracy',
-    verbose=1,
-    n_jobs=-1
-)
-grid_search.fit(X_train_resampled, y_train_resampled)
 
-# Best parameters and validation accuracy
-best_knn = grid_search.best_estimator_
+# Perform Grid Search with resampled data
+grid_search = GridSearchCV(estimator=knn, param_grid=param_grid, cv=3, scoring='f1', verbose=1, n_jobs=-1)
+grid_search.fit(X_resampled, Y_resampled)
+
+# Output best parameters and score
 print(f"Best Parameters: {grid_search.best_params_}")
-val_accuracy = best_knn.score(X_val_resampled, y_val_resampled)
-print(f"Validation Accuracy for kNN: {val_accuracy:.4f}")
+print(f"Best Score: {grid_search.best_score_}")
 
-# Final evaluation on test data
-y_pred_resampled = best_knn.predict(X_test_resampled)
-print("Classification Report for kNN:")
-print(classification_report(y_test_resampled, y_pred_resampled))
+# Best model from grid search
+best_knn = grid_search.best_estimator_
 
-# Visualization of confusion matrix
-sns.heatmap(confusion_matrix(y_test_resampled, y_pred_resampled), annot=True, fmt="d", cmap="Blues")
-plt.title("Confusion Matrix for kNN")
+# Evaluate the model on the original test set
+y_pred = best_knn.predict(X_test)
+
+# Display results
+print("Confusion Matrix:")
+print(confusion_matrix(y_test, y_pred))
+
+print("Classification Report:")
+print(classification_report(y_test, y_pred, zero_division=1))
+
+# Visualize confusion matrix
+sns.heatmap(confusion_matrix(y_test, y_pred), annot=True, fmt="d", cmap="Blues")
+plt.title("Confusion Matrix")
 plt.xlabel("Predicted")
 plt.ylabel("True")
 plt.show()

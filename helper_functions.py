@@ -30,3 +30,5 @@ def handle_missing_data(df, column_strategies):
         else:
             df[column] = df[column].fillna(strategy)
     return df   
+
+

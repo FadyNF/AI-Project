@@ -4,8 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+import random
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import accuracy_score  
 from sklearn.model_selection import train_test_split, cross_val_score
 from deap import base, creator, tools, algorithms
 
@@ -63,7 +65,6 @@ print(f"Merged dataset shape: {merged_data.shape}")
 missing_data_strategies = {
     'OCCUPATION_TYPE': 'Unknown',  # fill with 'Unknown'
 }
-
 merged_data = hf.handle_missing_data(merged_data, missing_data_strategies)
 
 # Transform 'DAYS_BIRTH' to 'AGE' before removing outliers
@@ -73,15 +74,19 @@ merged_data.drop(columns=['DAYS_BIRTH'], inplace=True)
 # Create child-to-family ratio
 merged_data['CHILD_TO_FAMILY_RATIO'] = merged_data['CNT_CHILDREN'] / (merged_data['CNT_FAM_MEMBERS'] + 1)
 
+# Remove irrelevant columns
+irrelevant_columns = ['FLAG_MOBIL', 'FLAG_PHONE', 'FLAG_WORK_PHONE', 'FLAG_EMAIL']
+merged_data.drop(columns=irrelevant_columns, errors='ignore', inplace=True)
+
+# Handle extreme values of DAYS_EMPLOYED
+merged_data['DAYS_EMPLOYED'] = merged_data['DAYS_EMPLOYED'].replace(365243, 0)
+
 # Remove outliers for relevant columns
 columns_to_check_for_outliers = ['AMT_INCOME_TOTAL', 'AGE', 'DAYS_EMPLOYED', 'CHILD_TO_FAMILY_RATIO']
 merged_data = hf.remove_outliers(merged_data, columns_to_check_for_outliers)
 
-# Drop irrelevant columns
+# Drop ID column as it's not required for analysis
 merged_data.drop(columns=['ID'], inplace=True)
-
-# Transform DAYS_EMPLOYED
-merged_data['DAYS_EMPLOYED'] = merged_data['DAYS_EMPLOYED'].apply(lambda x: np.nan if x > 0 else abs(x))
 
 # Encode categorical variables
 categorical_cols = ['CODE_GENDER', 'FLAG_OWN_CAR', 'FLAG_OWN_REALTY', 
@@ -111,58 +116,82 @@ X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, random_
 
 POP_SIZE = 10  # Population size
 GENS = 10  # Number of generations
-CXPB = 0.8  # Crossover probability
+CXPB = 0.7  # Crossover probability
 MUTPB = 0.2  # Mutation probability
 
+# Fitness function for the Genetic Algorithm
 def fitness_function(individual):
     selected_features = [index for index, value in enumerate(individual) if value == 1]
     if len(selected_features) == 0:  # Avoid empty feature selection
         return 0,
-    X_train_selected = X_train.iloc[:, selected_features]
+    X_selected = X.iloc[:, selected_features]
+
+    # Split data dynamically into training and validation sets
+    X_train, X_val, Y_train, Y_val = train_test_split(X_selected, Y, test_size=0.3, random_state=42)
+
+    # Train a Decision Tree classifier
     model = DecisionTreeClassifier(random_state=42)
-    scores = cross_val_score(model, X_train_selected, Y_train, cv=3, scoring='accuracy', n_jobs=-1)
-    return scores.mean(),
+    model.fit(X_train, Y_train)
 
+    # Evaluate accuracy on the validation set
+    Y_pred = model.predict(X_val)
+    accuracy = accuracy_score(Y_val, Y_pred)
+    return accuracy,
 
-# Define Genetic Algorithm Toolbox
-creator.create("FitnessMax", base.Fitness, weights=(1.0,))  # Maximize accuracy
+# Create types for DEAP
+creator.create("FitnessMax", base.Fitness, weights=(1.0,))
 creator.create("Individual", list, fitness=creator.FitnessMax)
+
+# Initialize toolbox
 toolbox = base.Toolbox()
 
-# Attribute generation: Random binary (0 or 1) for each feature
-toolbox.register("attr_bool", np.random.randint, 0, 2)
-toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_bool, n=X.shape[1])
+# Attribute generator for binary representation (0 or 1)
+toolbox.register("attr_bool", random.randint, 0, 1)
+
+# Structure initializers
+toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_bool, n=X.shape[1])  # n=number of features
 toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
-# Register Genetic Operators
-toolbox.register("mate", tools.cxTwoPoint)  # Crossover
-toolbox.register("mutate", tools.mutFlipBit, indpb=0.05)  # Mutation
-toolbox.register("select", tools.selTournament, tournsize=3)  # Selection
+# Register genetic operators
+toolbox.register("mate", tools.cxTwoPoint)
+toolbox.register("mutate", tools.mutFlipBit, indpb=0.05)
+toolbox.register("select", tools.selTournament, tournsize=3)
 toolbox.register("evaluate", fitness_function)
 
-# Run Genetic Algorithm with custom logging for best fitness
-def log_generation_stats(population, generation):
-    best_individual = tools.selBest(population, k=1)[0]
-    best_fitness = best_individual.fitness.values[0]
-    print(f"Generation {generation}: Best Fitness = {best_fitness}")
-
-
-# Run Genetic Algorithm
+# Initialize population
 population = toolbox.population(n=POP_SIZE)
+
+# Evaluate initial population
+fitnesses = map(toolbox.evaluate, population)
+for ind, fit in zip(population, fitnesses):
+    ind.fitness.values = fit
+
+# Begin evolution
 for gen in range(GENS):
-    offspring = algorithms.varAnd(population, toolbox, cxpb=CXPB, mutpb=MUTPB)
-    invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
-    fitnesses = map(toolbox.evaluate, invalid_ind)
-    for ind, fit in zip(invalid_ind, fitnesses):
+    offspring = toolbox.select(population, len(population))
+    offspring = list(map(toolbox.clone, offspring))
+
+    for child1, child2 in zip(offspring[::2], offspring[1::2]):
+        if random.random() < CXPB:  # Crossover probability
+            toolbox.mate(child1, child2)
+            del child1.fitness.values
+            del child2.fitness.values
+
+    for mutant in offspring:
+        if random.random() < MUTPB:  # Mutation probability
+            toolbox.mutate(mutant)
+            del mutant.fitness.values
+
+    # Evaluate invalid individuals
+    invalid_individuals = [ind for ind in offspring if not ind.fitness.valid]
+    fitnesses = map(toolbox.evaluate, invalid_individuals)
+    for ind, fit in zip(invalid_individuals, fitnesses):
         ind.fitness.values = fit
-    population[:] = toolbox.select(offspring, len(population))
-    log_generation_stats(population, gen)
 
-# Get the best individual
-best_individual = tools.selBest(population , k=1)[0]
-selected_features = [index for index, value in enumerate(best_individual) if value == 1]
+    population[:] = offspring
+    best_ind = tools.selBest(population, k=1)[0]
+    print(f"Generation {gen}: Best Fitness = {best_ind.fitness.values[0]}")
 
-# Print Results
-print(f"Best individual: {best_individual}")
-print(f"Selected features indices: {selected_features}")
-print(f"Selected features names: {X.columns[selected_features].tolist()}")
+# Final selected features
+selected_features = [index for index, value in enumerate(best_ind) if value == 1]
+print("Selected Features:", X.columns[selected_features].tolist())

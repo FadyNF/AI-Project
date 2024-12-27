@@ -1,13 +1,13 @@
 import helper_functions as hf
-
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import random
 from sklearn.preprocessing import StandardScaler
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.metrics import accuracy_score  
+from sklearn.neural_network import MLPClassifier 
+from sklearn.tree import DecisionTreeClassifier  
+from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split, cross_val_score
 from deap import base, creator, tools, algorithms
 
@@ -130,12 +130,13 @@ def fitness_function(individual):
     X_train, X_val, Y_train, Y_val = train_test_split(X_selected, Y, test_size=0.3, random_state=42)
 
     # Train a Decision Tree classifier
-    model = DecisionTreeClassifier(random_state=42)
-    model.fit(X_train, Y_train)
+    dt_model = DecisionTreeClassifier(random_state=42)
+    dt_model.fit(X_train, Y_train)
 
     # Evaluate accuracy on the validation set
-    Y_pred = model.predict(X_val)
+    Y_pred = dt_model.predict(X_val)
     accuracy = accuracy_score(Y_val, Y_pred)
+
     return accuracy,
 
 # Create types for DEAP
@@ -195,3 +196,37 @@ for gen in range(GENS):
 # Final selected features
 selected_features = [index for index, value in enumerate(best_ind) if value == 1]
 print("Selected Features:", X.columns[selected_features].tolist())
+
+
+#Decision Tree Model
+# Train the final model using selected features
+print("Training Decision Tree Classifier...")
+X_selected = X.iloc[:, selected_features]
+X_train, X_test, Y_train, Y_test = train_test_split(X_selected, Y, test_size=0.3, random_state=42)
+model = DecisionTreeClassifier(random_state=42)
+model.fit(X_train, Y_train)
+
+# Make predictions and evaluate the model
+Y_pred = model.predict(X_test)
+print("Decision Tree Classification Report:")
+print(classification_report(Y_test, Y_pred))
+
+
+
+from sklearn.neural_network import MLPClassifier
+
+# Train the MLP model using the selected features
+print("Training MLP Classifier...")
+X_selected = X.iloc[:, selected_features]
+X_train, X_test, Y_train, Y_test = train_test_split(X_selected, Y, test_size=0.3, random_state=42)
+
+# Initialize the MLP model (you can adjust parameters as needed)
+mlp_model = MLPClassifier(hidden_layer_sizes=(100,), max_iter=150, random_state=42)
+mlp_model.fit(X_train, Y_train)
+
+# Make predictions and evaluate the MLP model
+Y_pred_mlp = mlp_model.predict(X_test)
+
+# Evaluate the MLP model
+print("MLP Classification Report:")
+print(classification_report(Y_test, Y_pred_mlp))

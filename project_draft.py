@@ -1,3 +1,4 @@
+import helper_functions as hf
 import numpy as np
 import pandas as pd
 import random
@@ -6,19 +7,17 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import classification_report
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
+from sklearn.neighbors import KNeighborsClassifier
 from imblearn.over_sampling import SMOTE
-
 from deap import base, creator, tools, algorithms
 from concurrent.futures import ThreadPoolExecutor
-
-import helper_functions as hf
-
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import classification_report
 
 
 # Load datasets
@@ -175,6 +174,41 @@ best_features = feature_selection_ga()
 selected_columns = [f for i, f in enumerate(X.columns) if best_features[i] == 1]
 print("Best Selected Features:", selected_columns)
 
+# ---------------- Data Splitting ---------------- #
+# Ensure data is split into train, validation, and test sets
+X_selected = X[selected_columns]
+
+# Initial split: 85% train+validation and 15% test
+X_train_val, X_test, y_train_val, y_test = train_test_split(X_selected, y, test_size=0.15, random_state=42)
+
+# Split train+validation into 70% train and 15% validation
+X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=0.1765, random_state=42)  # 0.1765 * 85% = 15%
+
+# ---------------- Decision Tree Classifier ---------------- #
+dt_model = DecisionTreeClassifier(random_state=42)
+dt_model.fit(X_train, y_train)
+
+# Evaluate on validation data for fitness function
+val_accuracy = dt_model.score(X_val, y_val)
+print(f"Validation Accuracy for Decision Tree: {val_accuracy:.4f}")
+
+# Final evaluation on test data
+dt_y_pred = dt_model.predict(X_test)
+print("Classification Report for Decision Tree:")
+print(classification_report(y_test, dt_y_pred))
+
+# ---------------- MLP Classifier ---------------- #
+mlp_model = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=42)
+mlp_model.fit(X_train, y_train)
+
+# Evaluate on validation data for fitness function
+val_accuracy = mlp_model.score(X_val, y_val)
+print(f"Validation Accuracy for MLP: {val_accuracy:.4f}")
+
+# Final evaluation on test data
+mlp_y_pred = mlp_model.predict(X_test)
+print("Classification Report for MLP Classifier:")
+print(classification_report(y_test, mlp_y_pred, zero_division=1))
 
 # ---------------- kNN Model Training and Evaluation ---------------- #
 
@@ -217,6 +251,3 @@ print(classification_report(Y_test, Y_pred))
 
 sns.heatmap(confusion_matrix(Y_test, Y_pred), annot=True, fmt="d", cmap="Blues")
 plt.title("Confusion Matrix")
-plt.xlabel("Predicted")
-plt.ylabel("True")
-plt.show()

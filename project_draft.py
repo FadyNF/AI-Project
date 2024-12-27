@@ -1,10 +1,9 @@
-import helper_functions as hf
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 import pandas as pd
 import random
 import time
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
@@ -12,9 +11,14 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+
 from imblearn.over_sampling import SMOTE
+
 from deap import base, creator, tools, algorithms
 from concurrent.futures import ThreadPoolExecutor
+
+import helper_functions as hf
+
 
 
 # Load datasets
@@ -109,10 +113,9 @@ def evaluate(individual):
     X_val, _, y_val, _ = train_test_split(X_temp, y_temp, test_size=0.50, random_state=42)
 
     model = LogisticRegression(max_iter=1000, random_state=42)
-    model.fit(X_train, y_train)
+    model.fit(X_train, y_train)  # Training happens here
     y_pred = model.predict(X_val)
     return accuracy_score(y_val, y_pred),
-
 
 creator.create("FitnessMax", base.Fitness, weights=(1.0,))
 creator.create("Individual", list, fitness=creator.FitnessMax)
@@ -173,53 +176,45 @@ selected_columns = [f for i, f in enumerate(X.columns) if best_features[i] == 1]
 print("Best Selected Features:", selected_columns)
 
 
-# ---------------- Model Training and Evaluation ---------------- #
+# ---------------- kNN Model Training and Evaluation ---------------- #
 
-# ---------------- Data Preparation ---------------- #
-# Handling class imbalance using SMOTE
 X_selected_features = X[selected_columns] 
 smote = SMOTE(random_state=42)
 X_resampled, Y_resampled = smote.fit_resample(X_selected_features, y)
 
-# Splitting the balanced dataset
-X_train, X_test, Y_train, Y_test = train_test_split(X_resampled, Y_resampled, test_size=0.15, random_state=42)
+# Ensure that the total sum of splits is 1.0 (e.g., 70% train, 15% test, 15% validation)
+X_train, X_temp, Y_train, Y_temp = train_test_split(X_resampled, Y_resampled, test_size=0.30, random_state=42)
+X_test, X_val, Y_test, Y_val = train_test_split(X_temp, Y_temp, test_size=0.50, random_state=42)
 
-# ---------------- Hyperparameter Tuning for kNN ---------------- #
-# Define the model
 knn = KNeighborsClassifier()
 
-# Define hyperparameters to tune
 param_grid = {
-    'n_neighbors': [3, 5, 7],  # Fewer neighbors to reduce computation time
-    'weights': ['uniform', 'distance'],  # Weighting strategy
-    'metric': ['euclidean', 'manhattan']  # Distance metrics
+    'n_neighbors': [3, 5, 7],  
+    'weights': ['uniform', 'distance'], 
+    'metric': ['euclidean', 'manhattan']  
 }
 
-# GridSearchCV to find the best parameters with fewer folds for faster performance
+# Model training
 grid_search = GridSearchCV(estimator=knn, param_grid=param_grid, cv=3, scoring='accuracy', verbose=1, n_jobs=-1)
-grid_search.fit(X_train, Y_train)
+grid_search.fit(X_train, Y_train) 
 
-# Best parameters and score
 print(f"Best Parameters: {grid_search.best_params_}")
 print(f"Best Score: {grid_search.best_score_}")
 
-# ---------------- Train the kNN Model ---------------- #
-# Train with the best parameters
+
 best_knn = grid_search.best_estimator_
-best_knn.fit(X_train, Y_train)
+best_knn.fit(X_train, Y_train) 
 
-# ---------------- Evaluate the Model ---------------- #
-Y_pred = best_knn.predict(X_test)
+# Model testing
+Y_pred = best_knn.predict(X_test) 
 
-# Confusion Matrix
+# Results
 print("Confusion Matrix:")
 print(confusion_matrix(Y_test, Y_pred))
 
-# Classification Report
 print("Classification Report:")
 print(classification_report(Y_test, Y_pred))
 
-# ---------------- Visualize Results ---------------- #
 sns.heatmap(confusion_matrix(Y_test, Y_pred), annot=True, fmt="d", cmap="Blues")
 plt.title("Confusion Matrix")
 plt.xlabel("Predicted")

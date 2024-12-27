@@ -29,4 +29,4 @@ def handle_missing_data(df, column_strategies):
             df[column] = df[column].fillna(df[column].mode()[0])
         else:
             df[column] = df[column].fillna(strategy)
-    return df
+    return df   

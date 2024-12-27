@@ -176,91 +176,84 @@ selected_columns = [f for i, f in enumerate(X.columns) if best_features[i] == 1]
 print("Best Selected Features:", selected_columns)
 
 
-# ---------------- Decision Tree Classifier ---------------- #
-
-# Split the data into training and testing sets using the selected features
+# ---------------- Data Splitting ---------------- #
+# Ensure data is split into train, validation, and test sets
 X_selected = X[selected_columns]
-X_train, X_test, y_train, y_test = train_test_split(X_selected, y, test_size=0.30, random_state=42)
 
-# Initialize the Decision Tree Classifier
+# Initial split: 85% train+validation and 15% test
+X_train_val, X_test, y_train_val, y_test = train_test_split(X_selected, y, test_size=0.15, random_state=42)
+
+# Split train+validation into 70% train and 15% validation
+X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=0.1765, random_state=42)  # 0.1765 * 85% = 15%
+
+# ---------------- Decision Tree Classifier ---------------- #
 dt_model = DecisionTreeClassifier(random_state=42)
-
-# Train the Decision Tree Classifier
 dt_model.fit(X_train, y_train)
 
-# Predict on the test set
-dt_y_pred = dt_model.predict(X_test)
+# Evaluate on validation data for fitness function
+val_accuracy = dt_model.score(X_val, y_val)
+print(f"Validation Accuracy for Decision Tree: {val_accuracy:.4f}")
 
-# Print the classification report for Decision Tree Classifier
+# Final evaluation on test data
+dt_y_pred = dt_model.predict(X_test)
 print("Classification Report for Decision Tree:")
 print(classification_report(y_test, dt_y_pred))
+
 # ---------------- MLP Classifier ---------------- #
-
-# Split the data into training and testing sets using the selected features
-X_selected = X[selected_columns]
-X_train, X_test, y_train, y_test = train_test_split(X_selected, y, test_size=0.30, random_state=42)
-
-# Initialize the MLP Classifier
 mlp_model = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=42)
-
-# Train the MLP Classifier
 mlp_model.fit(X_train, y_train)
 
-# Predict on the test set
-mlp_y_pred = mlp_model.predict(X_test)
+# Evaluate on validation data for fitness function
+val_accuracy = mlp_model.score(X_val, y_val)
+print(f"Validation Accuracy for MLP: {val_accuracy:.4f}")
 
-# Print the classification report for MLP Classifier
+# Final evaluation on test data
+mlp_y_pred = mlp_model.predict(X_test)
 print("Classification Report for MLP Classifier:")
 print(classification_report(y_test, mlp_y_pred, zero_division=1))
-# ---------------- Model Training and Evaluation ---------------- #
 
-# ---------------- Data Preparation ---------------- #
-# Handling class imbalance using SMOTE
-X_selected_features = X[selected_columns] 
+# ---------------- kNN Classifier ---------------- #
 smote = SMOTE(random_state=42)
-X_resampled, Y_resampled = smote.fit_resample(X_selected_features, y)
+X_resampled, y_resampled = smote.fit_resample(X_selected, y)
 
-# Splitting the balanced dataset
-X_train, X_test, Y_train, Y_test = train_test_split(X_resampled, Y_resampled, test_size=0.15, random_state=42)
+# Re-split the balanced data
+X_train_val_resampled, X_test_resampled, y_train_val_resampled, y_test_resampled = train_test_split(
+    X_resampled, y_resampled, test_size=0.15, random_state=42
+)
+X_train_resampled, X_val_resampled, y_train_resampled, y_val_resampled = train_test_split(
+    X_train_val_resampled, y_train_val_resampled, test_size=0.1765, random_state=42
+)
 
-# ---------------- Hyperparameter Tuning for kNN ---------------- #
-# Define the model
-knn = KNeighborsClassifier()
-
-# Define hyperparameters to tune
+# Hyperparameter tuning using validation set
 param_grid = {
-    'n_neighbors': [3, 5, 7],  # Fewer neighbors to reduce computation time
-    'weights': ['uniform', 'distance'],  # Weighting strategy
-    'metric': ['euclidean', 'manhattan']  # Distance metrics
+    'n_neighbors': [3, 5, 7],
+    'weights': ['uniform', 'distance'],
+    'metric': ['euclidean', 'manhattan']
 }
+grid_search = GridSearchCV(
+    estimator=KNeighborsClassifier(),
+    param_grid=param_grid,
+    cv=3,
+    scoring='accuracy',
+    verbose=1,
+    n_jobs=-1
+)
+grid_search.fit(X_train_resampled, y_train_resampled)
 
-# GridSearchCV to find the best parameters with fewer folds for faster performance
-grid_search = GridSearchCV(estimator=knn, param_grid=param_grid, cv=3, scoring='accuracy', verbose=1, n_jobs=-1)
-grid_search.fit(X_train, Y_train)
-
-# Best parameters and score
-print(f"Best Parameters: {grid_search.best_params_}")
-print(f"Best Score: {grid_search.best_score_}")
-
-# ---------------- Train the kNN Model ---------------- #
-# Train with the best parameters
+# Best parameters and validation accuracy
 best_knn = grid_search.best_estimator_
-best_knn.fit(X_train, Y_train)
+print(f"Best Parameters: {grid_search.best_params_}")
+val_accuracy = best_knn.score(X_val_resampled, y_val_resampled)
+print(f"Validation Accuracy for kNN: {val_accuracy:.4f}")
 
-# ---------------- Evaluate the Model ---------------- #
-Y_pred = best_knn.predict(X_test)
+# Final evaluation on test data
+y_pred_resampled = best_knn.predict(X_test_resampled)
+print("Classification Report for kNN:")
+print(classification_report(y_test_resampled, y_pred_resampled))
 
-# Confusion Matrix
-print("Confusion Matrix:")
-print(confusion_matrix(Y_test, Y_pred))
-
-# Classification Report
-print("Classification Report:")
-print(classification_report(Y_test, Y_pred))
-
-# ---------------- Visualize Results ---------------- #
-sns.heatmap(confusion_matrix(Y_test, Y_pred), annot=True, fmt="d", cmap="Blues")
-plt.title("Confusion Matrix")
+# Visualization of confusion matrix
+sns.heatmap(confusion_matrix(y_test_resampled, y_pred_resampled), annot=True, fmt="d", cmap="Blues")
+plt.title("Confusion Matrix for kNN")
 plt.xlabel("Predicted")
 plt.ylabel("True")
 plt.show()

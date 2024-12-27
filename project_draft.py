@@ -7,14 +7,17 @@ import random
 import time
 
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import classification_report
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
+from sklearn.neighbors import KNeighborsClassifier
 from imblearn.over_sampling import SMOTE
 from deap import base, creator, tools, algorithms
 from concurrent.futures import ThreadPoolExecutor
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import classification_report
 
 
 # Load datasets
@@ -173,6 +176,42 @@ selected_columns = [f for i, f in enumerate(X.columns) if best_features[i] == 1]
 print("Best Selected Features:", selected_columns)
 
 
+# ---------------- Decision Tree Classifier ---------------- #
+
+# Split the data into training and testing sets using the selected features
+X_selected = X[selected_columns]
+X_train, X_test, y_train, y_test = train_test_split(X_selected, y, test_size=0.30, random_state=42)
+
+# Initialize the Decision Tree Classifier
+dt_model = DecisionTreeClassifier(random_state=42)
+
+# Train the Decision Tree Classifier
+dt_model.fit(X_train, y_train)
+
+# Predict on the test set
+dt_y_pred = dt_model.predict(X_test)
+
+# Print the classification report for Decision Tree Classifier
+print("Classification Report for Decision Tree:")
+print(classification_report(y_test, dt_y_pred))
+# ---------------- MLP Classifier ---------------- #
+
+# Split the data into training and testing sets using the selected features
+X_selected = X[selected_columns]
+X_train, X_test, y_train, y_test = train_test_split(X_selected, y, test_size=0.30, random_state=42)
+
+# Initialize the MLP Classifier
+mlp_model = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=42)
+
+# Train the MLP Classifier
+mlp_model.fit(X_train, y_train)
+
+# Predict on the test set
+mlp_y_pred = mlp_model.predict(X_test)
+
+# Print the classification report for MLP Classifier
+print("Classification Report for MLP Classifier:")
+print(classification_report(y_test, mlp_y_pred, zero_division=1))
 # ---------------- Model Training and Evaluation ---------------- #
 
 # ---------------- Data Preparation ---------------- #

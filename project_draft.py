@@ -19,6 +19,8 @@ from deap import base, creator, tools, algorithms
 from concurrent.futures import ThreadPoolExecutor
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import classification_report
+from sklearn.model_selection import RandomizedSearchCV
+from scipy.stats import randint, uniform
 
 
 # Load datasets
@@ -200,8 +202,6 @@ dt_y_pred = dt_model.predict(X_test)
 print("Classification Report for Decision Tree:")
 print(classification_report(y_test, dt_y_pred))
 
-from sklearn.model_selection import RandomizedSearchCV
-from scipy.stats import randint, uniform
 # ---------------- Random Search for Decision Tree ---------------- #
 print("Random Search for Decision Tree")
 

@@ -31,3 +31,22 @@ def handle_missing_data(df, column_strategies):
         else:
             df[column] = df[column].fillna(strategy)
     return df   
+
+
+def remove_columns_above_threshold(df, threshold=50):
+    # Calculate the null percentage for each column
+    null_percentage = (df.isnull().sum() / df.shape[0]) * 100
+
+    # Identify columns with null percentage above the threshold
+    cols_to_remove = null_percentage[null_percentage > threshold].index
+
+    # Drop those columns
+    df_cleaned = df.drop(columns=cols_to_remove)
+
+    # Print the columns that were removed
+    if len(cols_to_remove) > 0:
+        print(f"Columns removed due to null percentage > {threshold}: {list(cols_to_remove)}")
+    else:
+        print(f"No columns removed (no column exceeded {threshold}% null values)")
+
+    return df_cleaned
